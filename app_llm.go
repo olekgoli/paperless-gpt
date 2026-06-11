@@ -253,10 +253,10 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 	if isOwnBusinessDocument || isBusinessITAgreement {
 		filteredTags = appendTagIfMissing(filteredTags, "Działalność gospodarcza")
 	}
-	if isInsuranceDocument {
+	if isInsuranceDocument && !isTelecomAgreement {
 		filteredTags = appendTagIfMissing(filteredTags, "Ubezpieczenia")
 	}
-	if isInsuranceDocument && isVehicleDocument {
+	if isInsuranceDocument && isVehicleDocument && !isTelecomAgreement {
 		filteredTags = appendTagIfMissing(filteredTags, "Samochód")
 	}
 	if isSignificantPurchase {
