@@ -580,6 +580,54 @@ func TestSanitizeSuggestedTagsForBusinessInvoice(t *testing.T) {
 	assert.ElementsMatch(t, []string{"Finanse", "Działalność gospodarcza"}, tags)
 }
 
+func TestSanitizeSuggestedTagsForBusinessHardwareInvoice(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Finanse"},
+		"Faktura VAT Lantre",
+		"Sprzedawca: Lantre sp. z o.o.\nNabywca: Aleksander Goli Usługi IT NIP 6351860955\nMacBook Pro",
+	)
+
+	assert.ElementsMatch(t, []string{"Działalność gospodarcza", "Finanse", "Zakupy"}, tags)
+}
+
+func TestSanitizeSuggestedTagsForInsuranceVehicleDocument(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Finanse", "Szkoda"},
+		"Formularz zgłoszenia szkody",
+		"PZU formularz zgłoszenia szkody z ubezpieczenia AC OC. Marka i model pojazdu, numer rejestracyjny.",
+	)
+
+	assert.ElementsMatch(t, []string{"Finanse", "Ubezpieczenia", "Samochód"}, tags)
+}
+
+func TestSanitizeSuggestedTagsRemovesAgreementFromStatementsAndVouchers(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Telekomunikacja", "Umowy"},
+		"Wypowiedzenie umowy",
+		"MicoNet Sp. z o.o. Oświadczenie o wypowiedzeniu usług telekomunikacyjnych.",
+	)
+
+	assert.Equal(t, []string{"Telekomunikacja"}, tags)
+
+	voucherTags := sanitizeSuggestedTags(
+		[]string{"Podróże", "Ubezpieczenia", "Umowy"},
+		"Voucher podróżny",
+		"Voucher Sun & Fun z informacją o ubezpieczeniu.",
+	)
+
+	assert.ElementsMatch(t, []string{"Podróże", "Ubezpieczenia"}, voucherTags)
+}
+
+func TestSanitizeSuggestedTagsForBusinessITAgreement(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Umowy", "Zatrudnienie"},
+		"Umowa o zachowaniu poufności ATOS",
+		"ATOS Non-disclosure agreement dotycząca współpracy przy usługach IT.",
+	)
+
+	assert.ElementsMatch(t, []string{"Działalność gospodarcza", "Informatyka", "Umowy"}, tags)
+}
+
 func TestSanitizeSuggestedTagsKeepsTaxDocuments(t *testing.T) {
 	tags := sanitizeSuggestedTags(
 		[]string{"Podatki"},
@@ -610,6 +658,113 @@ func TestSanitizeSuggestedCorrespondentFallsBackToUnknown(t *testing.T) {
 	)
 
 	assert.Equal(t, "Unknown", correspondent)
+}
+
+func TestSanitizeSuggestedCorrespondentExtractsKnownIssuers(t *testing.T) {
+	tests := []struct {
+		name      string
+		suggested string
+		title     string
+		content   string
+		expected  string
+	}{
+		{
+			name:      "PZU policy",
+			suggested: "Aleksander Goli",
+			title:     "Formularz zgłoszenia szkody",
+			content:   "PZU formularz zgłoszenia szkody z ubezpieczenia AC OC. Właściciel pojazdu Aleksander Goli.",
+			expected:  "PZU",
+		},
+		{
+			name:      "Lantre invoice",
+			suggested: "Aleksander Goli Usługi IT",
+			title:     "Faktura VAT",
+			content:   "Sprzedawca: Lantre sp. z o.o.\nNabywca: Aleksander Goli Usługi IT NIP 6351860955",
+			expected:  "Lantre sp. z o.o.",
+		},
+		{
+			name:      "ATOS NDA",
+			suggested: "Aleksander Goli",
+			title:     "Umowa o zachowaniu poufności",
+			content:   "ATOS Non-disclosure agreement z Aleksander Goli.",
+			expected:  "ATOS",
+		},
+		{
+			name:      "MicoNet statement",
+			suggested: "Aleksander Goli",
+			title:     "Wypowiedzenie umowy",
+			content:   "MicoNet Sp. z o.o. Oświadczenie o wypowiedzeniu usług telekomunikacyjnych przez Aleksander Goli.",
+			expected:  "MicoNet Sp. z o.o.",
+		},
+	}
+
+	available := []string{"Aleksander Goli", "PZU", "Lantre sp. z o.o.", "ATOS", "MicoNet Sp. z o.o.", "Unknown"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			correspondent := sanitizeSuggestedCorrespondent(tt.suggested, tt.title, tt.content, available)
+			assert.Equal(t, tt.expected, correspondent)
+		})
+	}
+}
+
+func TestSanitizeSuggestedDocumentType(t *testing.T) {
+	tests := []struct {
+		name      string
+		suggested string
+		title     string
+		content   string
+		expected  string
+	}{
+		{
+			name:      "privacy notice",
+			suggested: "Umowa",
+			title:     "Informacja o przetwarzaniu danych osobowych",
+			content:   "Orange Polska informuje o zasadach RODO.",
+			expected:  "Dokument informacyjny",
+		},
+		{
+			name:      "voucher with insurance mention",
+			suggested: "Polisa",
+			title:     "Voucher",
+			content:   "Voucher Sun & Fun z informacją o ubezpieczeniu.",
+			expected:  "Voucher",
+		},
+		{
+			name:      "thesis",
+			suggested: "",
+			title:     "Praca inżynierska",
+			content:   "System wspomagający automatyzację procesów biznesowych w środowisku Microsoft Windows.",
+			expected:  "Praca dyplomowa",
+		},
+		{
+			name:      "policy",
+			suggested: "Umowa",
+			title:     "Polisa OC",
+			content:   "PZU ubezpieczenie pojazdu, numer rejestracyjny.",
+			expected:  "Polisa",
+		},
+		{
+			name:      "statement",
+			suggested: "Umowa",
+			title:     "Wypowiedzenie umowy",
+			content:   "Oświadczenie o wypowiedzeniu usług.",
+			expected:  "Oświadczenie",
+		},
+		{
+			name:      "business NDA",
+			suggested: "Oświadczenie",
+			title:     "Umowa o zachowaniu poufności ATOS",
+			content:   "ATOS NDA non-disclosure agreement.",
+			expected:  "Umowa",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documentType := sanitizeSuggestedDocumentType(tt.suggested, tt.title, tt.content)
+			assert.Equal(t, tt.expected, documentType)
+		})
+	}
 }
 
 func TestMetadataGenerationUsesTemperature(t *testing.T) {

@@ -203,15 +203,16 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 
 	text := title + "\n" + content
 	normalizedText := strings.ToLower(text)
-	isPrivacyNotice := strings.Contains(normalizedText, "przetwarzaniu danych osobowych") ||
-		strings.Contains(normalizedText, "ochronie danych osobowych") ||
-		strings.Contains(normalizedText, "polityka prywatności") ||
-		strings.Contains(normalizedText, "privacy notice") ||
-		strings.Contains(normalizedText, "privacy policy") ||
-		strings.Contains(normalizedText, "rodo")
+	isPrivacyNotice := isPrivacyNoticeText(normalizedText)
 	isInvoice := isInvoiceText(normalizedText)
 	isTaxDocument := isTaxDocumentText(normalizedText)
 	isOwnBusinessDocument := containsOwnBusiness(text)
+	isInsuranceDocument := isInsuranceText(normalizedText)
+	isVehicleDocument := isVehicleText(normalizedText)
+	isReservationOrVoucher := isReservationOrVoucherText(normalizedText)
+	isWithdrawalOrStatement := isWithdrawalOrStatementText(normalizedText)
+	isBusinessITAgreement := isBusinessITAgreementText(normalizedText)
+	isSignificantPurchase := isSignificantPurchaseText(normalizedText)
 
 	filteredTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -225,13 +226,32 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 				continue
 			}
 		}
+		if normalizedTag == "umowy" && (isReservationOrVoucher || isWithdrawalOrStatement) {
+			continue
+		}
 		if normalizedTag == "podatki" && isInvoice && !isTaxDocument {
+			continue
+		}
+		if normalizedTag == "zatrudnienie" && isBusinessITAgreement {
 			continue
 		}
 		filteredTags = append(filteredTags, tag)
 	}
-	if isOwnBusinessDocument && !containsTag(filteredTags, "Działalność gospodarcza") {
-		filteredTags = append(filteredTags, "Działalność gospodarcza")
+	if isOwnBusinessDocument || isBusinessITAgreement {
+		filteredTags = appendTagIfMissing(filteredTags, "Działalność gospodarcza")
+	}
+	if isInsuranceDocument {
+		filteredTags = appendTagIfMissing(filteredTags, "Ubezpieczenia")
+	}
+	if isInsuranceDocument && isVehicleDocument {
+		filteredTags = appendTagIfMissing(filteredTags, "Samochód")
+	}
+	if isSignificantPurchase {
+		filteredTags = appendTagIfMissing(filteredTags, "Zakupy")
+	}
+	if isBusinessITAgreement {
+		filteredTags = appendTagIfMissing(filteredTags, "Informatyka")
+		filteredTags = appendTagIfMissing(filteredTags, "Umowy")
 	}
 
 	return filteredTags
@@ -243,12 +263,13 @@ func sanitizeSuggestedCorrespondent(suggested, title, content string, availableC
 		correspondent = canonical
 	}
 
-	if !isInvoiceText(strings.ToLower(title+"\n"+content)) || !containsOwnBusiness(content) {
+	normalizedText := strings.ToLower(title + "\n" + content)
+	if !shouldRepairIssuerCorrespondent(correspondent, normalizedText) {
 		return correspondent
 	}
 
 	if correspondent == "" || isUnknownCorrespondent(correspondent) || isOwnBusinessCorrespondent(correspondent) {
-		if seller := extractInvoiceSeller(content, availableCorrespondents); seller != "" {
+		if seller := extractDocumentIssuer(content, availableCorrespondents); seller != "" {
 			return seller
 		}
 		if unknown := canonicalizeCorrespondent("Unknown", availableCorrespondents); unknown != "" {
@@ -261,6 +282,10 @@ func sanitizeSuggestedCorrespondent(suggested, title, content string, availableC
 }
 
 func extractInvoiceSeller(content string, availableCorrespondents []string) string {
+	return extractDocumentIssuer(content, availableCorrespondents)
+}
+
+func extractDocumentIssuer(content string, availableCorrespondents []string) string {
 	for _, correspondent := range availableCorrespondents {
 		if isUnknownCorrespondent(correspondent) || isOwnBusinessCorrespondent(correspondent) {
 			continue
@@ -303,6 +328,13 @@ func extractInvoiceSeller(content string, availableCorrespondents []string) stri
 	return ""
 }
 
+func appendTagIfMissing(tags []string, tag string) []string {
+	if containsTag(tags, tag) {
+		return tags
+	}
+	return append(tags, tag)
+}
+
 func containsTag(tags []string, expected string) bool {
 	for _, tag := range tags {
 		if strings.EqualFold(strings.TrimSpace(tag), expected) {
@@ -326,6 +358,95 @@ func isOwnBusinessCorrespondent(correspondent string) bool {
 func isInvoiceText(normalizedText string) bool {
 	return strings.Contains(normalizedText, "faktura") ||
 		strings.Contains(normalizedText, "invoice")
+}
+
+func isPrivacyNoticeText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "przetwarzaniu danych osobowych") ||
+		strings.Contains(normalizedText, "ochronie danych osobowych") ||
+		strings.Contains(normalizedText, "polityka prywatności") ||
+		strings.Contains(normalizedText, "polityka prywatnosci") ||
+		strings.Contains(normalizedText, "privacy notice") ||
+		strings.Contains(normalizedText, "privacy policy") ||
+		containsSeparatedTerm(normalizedText, "rodo")
+}
+
+func isInsuranceText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "polisa") ||
+		strings.Contains(normalizedText, "ubezpiecze") ||
+		strings.Contains(normalizedText, "odszkodow") ||
+		strings.Contains(normalizedText, "zgłoszenia szkody") ||
+		strings.Contains(normalizedText, "zgloszenia szkody") ||
+		strings.Contains(normalizedText, "formularz zgłoszenia szkody") ||
+		strings.Contains(normalizedText, "formularz zgloszenia szkody")
+}
+
+func isVehicleText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "pojazd") ||
+		strings.Contains(normalizedText, "samochód") ||
+		strings.Contains(normalizedText, "samochod") ||
+		strings.Contains(normalizedText, "numer rejestracyjny") ||
+		strings.Contains(normalizedText, "numer nadwozia") ||
+		strings.Contains(normalizedText, "vin") ||
+		strings.Contains(normalizedText, "marka i model")
+}
+
+func isReservationOrVoucherText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "voucher") ||
+		strings.Contains(normalizedText, "rezerwac") ||
+		strings.Contains(normalizedText, "booking") ||
+		strings.Contains(normalizedText, "reservation")
+}
+
+func isWithdrawalOrStatementText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "wypowiedzenie") ||
+		strings.Contains(normalizedText, "odstąpienie") ||
+		strings.Contains(normalizedText, "odstapienie") ||
+		strings.Contains(normalizedText, "oświadczenie") ||
+		strings.Contains(normalizedText, "oswiadczenie") ||
+		strings.Contains(normalizedText, "declaration") ||
+		strings.Contains(normalizedText, "statement")
+}
+
+func isBusinessITAgreementText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "atos") &&
+		(strings.Contains(normalizedText, "poufno") ||
+			strings.Contains(normalizedText, "non-disclosure") ||
+			strings.Contains(normalizedText, "nda"))
+}
+
+func isSignificantPurchaseText(normalizedText string) bool {
+	if !isInvoiceText(normalizedText) && !strings.Contains(normalizedText, "paragon") {
+		return false
+	}
+	purchaseKeywords := []string{
+		"lantre",
+		"macbook",
+		"laptop",
+		"komputer",
+		"monitor",
+		"iphone",
+		"ipad",
+		"sprzęt",
+		"sprzet",
+		"urządzenie",
+		"urzadzenie",
+	}
+	for _, keyword := range purchaseKeywords {
+		if strings.Contains(normalizedText, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldRepairIssuerCorrespondent(correspondent, normalizedText string) bool {
+	if correspondent != "" && !isUnknownCorrespondent(correspondent) && !isOwnBusinessCorrespondent(correspondent) {
+		return false
+	}
+	return isInvoiceText(normalizedText) ||
+		isInsuranceText(normalizedText) ||
+		isWithdrawalOrStatementText(normalizedText) ||
+		isBusinessITAgreementText(normalizedText)
 }
 
 func isTaxDocumentText(normalizedText string) bool {
@@ -373,7 +494,13 @@ func canonicalizeCorrespondent(candidate string, availableCorrespondents []strin
 func isSellerLabel(normalizedLine string) bool {
 	return strings.Contains(normalizedLine, "sprzedawca") ||
 		strings.Contains(normalizedLine, "wystawca") ||
-		strings.Contains(normalizedLine, "seller")
+		strings.Contains(normalizedLine, "seller") ||
+		strings.Contains(normalizedLine, "ubezpieczyciel") ||
+		strings.Contains(normalizedLine, "towarzystwo") ||
+		strings.Contains(normalizedLine, "usługodawca") ||
+		strings.Contains(normalizedLine, "uslugodawca") ||
+		strings.Contains(normalizedLine, "operator") ||
+		strings.Contains(normalizedLine, "organizator")
 }
 
 func isBuyerLabel(normalizedLine string) bool {
@@ -428,6 +555,17 @@ func comparableName(text string) string {
 		}
 	}
 	return builder.String()
+}
+
+func containsSeparatedTerm(text, term string) bool {
+	for _, field := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if field == term {
+			return true
+		}
+	}
+	return false
 }
 
 func digitsOnly(text string) string {
@@ -500,6 +638,7 @@ func (app *App) getSuggestedDocumentType(
 	}
 
 	response := strings.TrimSpace(stripReasoning(completion.Choices[0].Content))
+	response = sanitizeSuggestedDocumentType(response, suggestedTitle, content)
 
 	// Validate that the response is in the available document types list
 	for _, docType := range availableDocumentTypes {
@@ -513,6 +652,53 @@ func (app *App) getSuggestedDocumentType(
 		logger.Warnf("LLM suggested document type '%s' not found in available types, ignoring", response)
 	}
 	return "", nil
+}
+
+func sanitizeSuggestedDocumentType(suggested, title, content string) string {
+	documentType := strings.TrimSpace(strings.Trim(suggested, "\""))
+	normalizedText := strings.ToLower(title + "\n" + content)
+
+	switch {
+	case isPrivacyNoticeText(normalizedText):
+		return "Dokument informacyjny"
+	case isThesisText(normalizedText):
+		return "Praca dyplomowa"
+	case strings.Contains(normalizedText, "voucher"):
+		return "Voucher"
+	case strings.Contains(normalizedText, "rezerwac") || strings.Contains(normalizedText, "booking") || strings.Contains(normalizedText, "reservation"):
+		return "Rezerwacja"
+	case isInsuranceText(normalizedText):
+		return "Polisa"
+	case isBusinessITAgreementText(normalizedText):
+		return "Umowa"
+	case isWithdrawalOrStatementText(normalizedText):
+		return "Oświadczenie"
+	case isInvoiceText(normalizedText):
+		return "Faktura"
+	case strings.Contains(normalizedText, "paragon"):
+		return "Paragon"
+	case isDiagnosticResultText(normalizedText):
+		return "Wynik badania"
+	default:
+		return documentType
+	}
+}
+
+func isThesisText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "praca dyplomowa") ||
+		strings.Contains(normalizedText, "praca inżynierska") ||
+		strings.Contains(normalizedText, "praca inzynierska") ||
+		strings.Contains(normalizedText, "praca magisterska")
+}
+
+func isDiagnosticResultText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "wynik badania") ||
+		strings.Contains(normalizedText, "wyniki badania") ||
+		strings.Contains(normalizedText, "wyniki badań") ||
+		strings.Contains(normalizedText, "wyniki badan") ||
+		strings.Contains(normalizedText, "laboratoryjn") ||
+		strings.Contains(normalizedText, "diagnostyczn") ||
+		strings.Contains(normalizedText, "vetlab")
 }
 
 // getSuggestedTitle generates a suggested title for a document using the LLM
