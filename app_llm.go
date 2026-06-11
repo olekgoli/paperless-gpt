@@ -62,7 +62,7 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithTemperature(0))
 	if err != nil {
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
 	}
@@ -91,11 +91,11 @@ func (app *App) getSuggestedTags(
 
 	// Get available tokens for content
 	templateData := map[string]interface{}{
-		"Language":       likelyLanguage,
-		"AvailableTags":  availableTags,
-		"OriginalTags":   originalTags,
-		"Title":          suggestedTitle,
-		"CreateNewTags":  createNewTags,
+		"Language":      likelyLanguage,
+		"AvailableTags": availableTags,
+		"OriginalTags":  originalTags,
+		"Title":         suggestedTitle,
+		"CreateNewTags": createNewTags,
 	}
 
 	availableTokens, err := getAvailableTokensForContent(tagTemplate, templateData)
@@ -144,6 +144,7 @@ func (app *App) getSuggestedTags(
 	for i, tag := range suggestedTags {
 		suggestedTags[i] = strings.TrimSpace(tag)
 	}
+	suggestedTags = sanitizeSuggestedTags(suggestedTags, suggestedTitle, content)
 
 	// append the original tags to the suggested tags
 	suggestedTags = append(suggestedTags, originalTags...)
@@ -185,6 +186,39 @@ func (app *App) getSuggestedTags(
 	}
 
 	return filteredTags, nil
+}
+
+func sanitizeSuggestedTags(tags []string, title, content string) []string {
+	forbiddenTags := map[string]struct{}{
+		"rezerwacja": {},
+		"rodo":       {},
+		"szkoda":     {},
+	}
+
+	text := strings.ToLower(title + "\n" + content)
+	isPrivacyNotice := strings.Contains(text, "przetwarzaniu danych osobowych") ||
+		strings.Contains(text, "ochronie danych osobowych") ||
+		strings.Contains(text, "polityka prywatności") ||
+		strings.Contains(text, "privacy notice") ||
+		strings.Contains(text, "privacy policy") ||
+		strings.Contains(text, "rodo")
+
+	filteredTags := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		normalizedTag := strings.ToLower(strings.TrimSpace(tag))
+		if _, forbidden := forbiddenTags[normalizedTag]; forbidden {
+			continue
+		}
+		if isPrivacyNotice {
+			switch normalizedTag {
+			case "dokumenty osobiste", "finanse", "umowy":
+				continue
+			}
+		}
+		filteredTags = append(filteredTags, tag)
+	}
+
+	return filteredTags
 }
 
 // getSuggestedDocumentType generates a suggested document type for a document using the LLM

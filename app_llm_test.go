@@ -548,6 +548,26 @@ func TestGetSuggestedCustomFields(t *testing.T) {
 	assert.Equal(t, "2025-12-31", dueDateField.Value)
 }
 
+func TestSanitizeSuggestedTagsRemovesForbiddenTags(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Telekomunikacja", "RODO", "Szkoda", "Rezerwacja"},
+		"Informacja dla klienta",
+		"Treść dokumentu",
+	)
+
+	assert.Equal(t, []string{"Telekomunikacja"}, tags)
+}
+
+func TestSanitizeSuggestedTagsRestrictsPrivacyNotices(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Dokumenty osobiste", "Finanse", "Telekomunikacja", "Umowy"},
+		"Informacja o przetwarzaniu danych osobowych",
+		"Orange Polska informuje o zasadach RODO.",
+	)
+
+	assert.Equal(t, []string{"Telekomunikacja"}, tags)
+}
+
 // Helper function to find a custom field by ID in a slice
 func findFieldByID(fields []CustomFieldSuggestion, id int) (CustomFieldSuggestion, bool) {
 	for _, field := range fields {
