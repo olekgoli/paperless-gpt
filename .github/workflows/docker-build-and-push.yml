@@ -6,6 +6,7 @@ permissions:
   packages: write # Added permission for GitHub Container Registry
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
