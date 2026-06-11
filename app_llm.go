@@ -216,6 +216,7 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 	isWithdrawalOrStatement := isWithdrawalOrStatementText(normalizedText)
 	isBusinessITAgreement := isBusinessITAgreementText(normalizedText)
 	isSignificantPurchase := isSignificantPurchaseText(normalizedText)
+	isTelecomAgreement := isTelecomAgreementText(normalizedText)
 
 	filteredTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -236,6 +237,9 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 			continue
 		}
 		if normalizedTag == "zakupy" && isInvoice && !isSignificantPurchase {
+			continue
+		}
+		if normalizedTag == "ubezpieczenia" && isTelecomAgreement {
 			continue
 		}
 		if normalizedTag == "ubezpieczenia" && !isInsuranceDocument && !isReservationOrVoucher {
@@ -260,6 +264,10 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 	}
 	if isBusinessITAgreement {
 		filteredTags = appendTagIfMissing(filteredTags, "Informatyka")
+		filteredTags = appendTagIfMissing(filteredTags, "Umowy")
+	}
+	if isTelecomAgreement {
+		filteredTags = appendTagIfMissing(filteredTags, "Telekomunikacja")
 		filteredTags = appendTagIfMissing(filteredTags, "Umowy")
 	}
 
@@ -450,6 +458,15 @@ func isBusinessITAgreementText(normalizedText string) bool {
 		(strings.Contains(normalizedText, "poufno") ||
 			strings.Contains(normalizedText, "non-disclosure") ||
 			strings.Contains(normalizedText, "nda"))
+}
+
+func isTelecomAgreementText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "orange") &&
+		strings.Contains(normalizedText, "umowa") &&
+		(strings.Contains(normalizedText, "świadczenie usług") ||
+			strings.Contains(normalizedText, "swiadczenie uslug") ||
+			strings.Contains(normalizedText, "internet") ||
+			strings.Contains(normalizedText, "telekomunikac"))
 }
 
 func isSignificantPurchaseText(normalizedText string) bool {
@@ -703,6 +720,8 @@ func sanitizeSuggestedDocumentType(suggested, title, content string) string {
 		return "Voucher"
 	case isTravelReservationDocumentText(normalizedText):
 		return "Rezerwacja"
+	case isTelecomAgreementText(normalizedText):
+		return "Umowa"
 	case isInsuranceText(normalizedText):
 		return "Polisa"
 	case isBusinessITAgreementText(normalizedText):

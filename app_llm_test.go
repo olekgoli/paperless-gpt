@@ -614,7 +614,7 @@ func TestSanitizeSuggestedTagsRemovesInsuranceMentionFromTelecomContract(t *test
 	tags := sanitizeSuggestedTags(
 		[]string{"Telekomunikacja", "Umowy", "Ubezpieczenia"},
 		"Umowa o świadczenie usług Orange",
-		"Orange Polska umowa telekomunikacyjna z opcjonalną wzmianką o usługach ubezpieczeniowych.",
+		"Orange Polska umowa o świadczenie usług internetowych z opcjonalną wzmianką o polisie ubezpieczeniowej.",
 	)
 
 	assert.ElementsMatch(t, []string{"Telekomunikacja", "Umowy"}, tags)
@@ -762,6 +762,13 @@ func TestSanitizeSuggestedDocumentType(t *testing.T) {
 			title:     "Polisa OC",
 			content:   "PZU ubezpieczenie pojazdu, numer rejestracyjny. Informacja o przetwarzaniu danych osobowych.",
 			expected:  "Polisa",
+		},
+		{
+			name:      "telecom agreement with insurance mention",
+			suggested: "Polisa",
+			title:     "Umowa o świadczenie Internetu Orange",
+			content:   "Orange Polska umowa o świadczenie usług internetowych z opcjonalną wzmianką o polisie ubezpieczeniowej.",
+			expected:  "Umowa",
 		},
 		{
 			name:      "statement",
