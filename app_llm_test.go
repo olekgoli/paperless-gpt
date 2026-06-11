@@ -17,9 +17,10 @@ import (
 
 // Mock LLM for testing
 type mockLLM struct {
-	lastPrompt string
-	Response   string
-	Error      error
+	lastPrompt     string
+	lastOptionsLen int
+	Response       string
+	Error          error
 }
 
 func (m *mockLLM) CreateEmbedding(_ context.Context, texts []string) ([][]float32, error) {
@@ -38,6 +39,7 @@ func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallO
 }
 
 func (m *mockLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	m.lastOptionsLen = len(options)
 	if len(messages) > 0 && len(messages[0].Parts) > 0 {
 		if textContent, ok := messages[0].Parts[0].(llms.TextContent); ok {
 			m.lastPrompt = textContent.Text
@@ -566,6 +568,116 @@ func TestSanitizeSuggestedTagsRestrictsPrivacyNotices(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{"Telekomunikacja"}, tags)
+}
+
+func TestSanitizeSuggestedTagsForBusinessInvoice(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Finanse", "Podatki"},
+		"Faktura VAT INFAKT",
+		"Sprzedawca: INFAKT Sp. z o.o.\nNabywca: Aleksander Goli Usługi IT\nNIP 6351860955",
+	)
+
+	assert.ElementsMatch(t, []string{"Finanse", "Działalność gospodarcza"}, tags)
+}
+
+func TestSanitizeSuggestedTagsKeepsTaxDocuments(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Podatki"},
+		"Deklaracja VAT-7",
+		"JPK VAT i rozliczenie podatku za okres 2025-01",
+	)
+
+	assert.Equal(t, []string{"Podatki"}, tags)
+}
+
+func TestSanitizeSuggestedCorrespondentExtractsInvoiceSeller(t *testing.T) {
+	correspondent := sanitizeSuggestedCorrespondent(
+		"Aleksander Goli",
+		"Faktura VAT INFAKT",
+		"Sprzedawca\nINFAKT Sp. z o.o.\nNabywca\nAleksander Goli Usługi IT\nNIP 6351860955",
+		[]string{"Aleksander Goli", "INFAKT Sp. z o.o.", "Unknown"},
+	)
+
+	assert.Equal(t, "INFAKT Sp. z o.o.", correspondent)
+}
+
+func TestSanitizeSuggestedCorrespondentFallsBackToUnknown(t *testing.T) {
+	correspondent := sanitizeSuggestedCorrespondent(
+		"Aleksander Goli Usługi IT",
+		"Faktura VAT",
+		"Nabywca: Aleksander Goli Usługi IT\nNIP 6351860955",
+		[]string{"Aleksander Goli", "Unknown"},
+	)
+
+	assert.Equal(t, "Unknown", correspondent)
+}
+
+func TestMetadataGenerationUsesTemperature(t *testing.T) {
+	testLogger := logrus.WithField("test", "temperature")
+	ctx := context.Background()
+
+	var err error
+	titleTemplate, err = template.New("title").Parse(testTitleTemplate)
+	require.NoError(t, err)
+	tagTemplate, err = template.New("tag").Parse(testTagTemplate)
+	require.NoError(t, err)
+	correspondentTemplate, err = template.New("correspondent").Parse(testCorrespondentTemplate)
+	require.NoError(t, err)
+	documentTypeTemplate, err = template.New("document_type").Parse("Types: {{.AvailableDocumentTypes}}\n{{.Content}}")
+	require.NoError(t, err)
+	createdDateTemplate, err = template.New("created_date").Parse(testCreatedDateContentTemplate)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		run  func(*App) error
+	}{
+		{
+			name: "title",
+			run: func(app *App) error {
+				_, err := app.getSuggestedTitle(ctx, "content", "title", testLogger)
+				return err
+			},
+		},
+		{
+			name: "tags",
+			run: func(app *App) error {
+				_, err := app.getSuggestedTags(ctx, "content", "title", []string{"Finanse"}, nil, testLogger)
+				return err
+			},
+		},
+		{
+			name: "correspondent",
+			run: func(app *App) error {
+				_, err := app.getSuggestedCorrespondent(ctx, "content", "title", []string{"Unknown"}, nil)
+				return err
+			},
+		},
+		{
+			name: "document_type",
+			run: func(app *App) error {
+				_, err := app.getSuggestedDocumentType(ctx, "content", "title", []string{"Faktura"}, testLogger)
+				return err
+			},
+		},
+		{
+			name: "created_date",
+			run: func(app *App) error {
+				_, err := app.getSuggestedCreatedDate(ctx, "content", testLogger)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockLLM := &mockLLM{Response: "Faktura"}
+			app := &App{LLM: mockLLM}
+
+			require.NoError(t, tt.run(app))
+			assert.Positive(t, mockLLM.lastOptionsLen)
+		})
+	}
 }
 
 // Helper function to find a custom field by ID in a slice

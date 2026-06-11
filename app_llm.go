@@ -9,11 +9,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	_ "image/jpeg"
 
 	"github.com/sirupsen/logrus"
 	"github.com/tmc/langchaingo/llms"
+)
+
+const (
+	ownBusinessName = "aleksander goli usługi it"
+	ownBusinessNIP  = "6351860955"
 )
 
 // getSuggestedCorrespondent generates a suggested correspondent for a document using the LLM
@@ -68,7 +74,7 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 	}
 
 	response := stripReasoning(strings.TrimSpace(completion.Choices[0].Content))
-	return response, nil
+	return sanitizeSuggestedCorrespondent(response, suggestedTitle, content, availableCorrespondents), nil
 }
 
 // getSuggestedTags generates suggested tags for a document using the LLM
@@ -132,7 +138,7 @@ func (app *App) getSuggestedTags(
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithTemperature(0))
 	if err != nil {
 		logger.Errorf("Error getting response from LLM: %v", err)
 		return nil, fmt.Errorf("error getting response from LLM: %v", err)
@@ -195,13 +201,17 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 		"szkoda":     {},
 	}
 
-	text := strings.ToLower(title + "\n" + content)
-	isPrivacyNotice := strings.Contains(text, "przetwarzaniu danych osobowych") ||
-		strings.Contains(text, "ochronie danych osobowych") ||
-		strings.Contains(text, "polityka prywatności") ||
-		strings.Contains(text, "privacy notice") ||
-		strings.Contains(text, "privacy policy") ||
-		strings.Contains(text, "rodo")
+	text := title + "\n" + content
+	normalizedText := strings.ToLower(text)
+	isPrivacyNotice := strings.Contains(normalizedText, "przetwarzaniu danych osobowych") ||
+		strings.Contains(normalizedText, "ochronie danych osobowych") ||
+		strings.Contains(normalizedText, "polityka prywatności") ||
+		strings.Contains(normalizedText, "privacy notice") ||
+		strings.Contains(normalizedText, "privacy policy") ||
+		strings.Contains(normalizedText, "rodo")
+	isInvoice := isInvoiceText(normalizedText)
+	isTaxDocument := isTaxDocumentText(normalizedText)
+	isOwnBusinessDocument := containsOwnBusiness(text)
 
 	filteredTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -215,10 +225,219 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 				continue
 			}
 		}
+		if normalizedTag == "podatki" && isInvoice && !isTaxDocument {
+			continue
+		}
 		filteredTags = append(filteredTags, tag)
+	}
+	if isOwnBusinessDocument && !containsTag(filteredTags, "Działalność gospodarcza") {
+		filteredTags = append(filteredTags, "Działalność gospodarcza")
 	}
 
 	return filteredTags
+}
+
+func sanitizeSuggestedCorrespondent(suggested, title, content string, availableCorrespondents []string) string {
+	correspondent := strings.TrimSpace(strings.Trim(suggested, "\""))
+	if canonical := canonicalizeCorrespondent(correspondent, availableCorrespondents); canonical != "" {
+		correspondent = canonical
+	}
+
+	if !isInvoiceText(strings.ToLower(title+"\n"+content)) || !containsOwnBusiness(content) {
+		return correspondent
+	}
+
+	if correspondent == "" || isUnknownCorrespondent(correspondent) || isOwnBusinessCorrespondent(correspondent) {
+		if seller := extractInvoiceSeller(content, availableCorrespondents); seller != "" {
+			return seller
+		}
+		if unknown := canonicalizeCorrespondent("Unknown", availableCorrespondents); unknown != "" {
+			return unknown
+		}
+		return "Unknown"
+	}
+
+	return correspondent
+}
+
+func extractInvoiceSeller(content string, availableCorrespondents []string) string {
+	for _, correspondent := range availableCorrespondents {
+		if isUnknownCorrespondent(correspondent) || isOwnBusinessCorrespondent(correspondent) {
+			continue
+		}
+		if strings.Contains(comparableName(content), comparableName(correspondent)) {
+			return correspondent
+		}
+	}
+
+	lines := strings.Split(content, "\n")
+	for index, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		normalizedLine := strings.ToLower(trimmedLine)
+		if !isSellerLabel(normalizedLine) {
+			continue
+		}
+
+		if candidate := cleanCorrespondentCandidate(afterLabelValue(trimmedLine)); isUsableSellerCandidate(candidate) {
+			if canonical := canonicalizeCorrespondent(candidate, availableCorrespondents); canonical != "" {
+				return canonical
+			}
+			return candidate
+		}
+
+		for nextIndex := index + 1; nextIndex < len(lines) && nextIndex <= index+5; nextIndex++ {
+			candidate := cleanCorrespondentCandidate(lines[nextIndex])
+			normalizedCandidate := strings.ToLower(candidate)
+			if isBuyerLabel(normalizedCandidate) {
+				break
+			}
+			if isUsableSellerCandidate(candidate) {
+				if canonical := canonicalizeCorrespondent(candidate, availableCorrespondents); canonical != "" {
+					return canonical
+				}
+				return candidate
+			}
+		}
+	}
+
+	return ""
+}
+
+func containsTag(tags []string, expected string) bool {
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag), expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsOwnBusiness(text string) bool {
+	return strings.Contains(strings.ToLower(text), ownBusinessName) ||
+		strings.Contains(digitsOnly(text), ownBusinessNIP)
+}
+
+func isOwnBusinessCorrespondent(correspondent string) bool {
+	normalized := strings.ToLower(correspondent)
+	return strings.Contains(normalized, "aleksander goli") ||
+		strings.Contains(digitsOnly(correspondent), ownBusinessNIP)
+}
+
+func isInvoiceText(normalizedText string) bool {
+	return strings.Contains(normalizedText, "faktura") ||
+		strings.Contains(normalizedText, "invoice")
+}
+
+func isTaxDocumentText(normalizedText string) bool {
+	taxKeywords := []string{
+		"deklarac",
+		"jpk",
+		"pit",
+		"cit",
+		"urząd skarbow",
+		"urzad skarbow",
+		"rozliczenie podat",
+		"decyzja podat",
+		"podatek dochodowy",
+		"vat-7",
+		"vat 7",
+	}
+	for _, keyword := range taxKeywords {
+		if strings.Contains(normalizedText, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnknownCorrespondent(correspondent string) bool {
+	return strings.EqualFold(strings.TrimSpace(correspondent), "Unknown")
+}
+
+func canonicalizeCorrespondent(candidate string, availableCorrespondents []string) string {
+	if strings.TrimSpace(candidate) == "" {
+		return ""
+	}
+	normalizedCandidate := comparableName(candidate)
+	for _, correspondent := range availableCorrespondents {
+		normalizedCorrespondent := comparableName(correspondent)
+		if normalizedCandidate == normalizedCorrespondent ||
+			strings.Contains(normalizedCandidate, normalizedCorrespondent) ||
+			strings.Contains(normalizedCorrespondent, normalizedCandidate) {
+			return correspondent
+		}
+	}
+	return ""
+}
+
+func isSellerLabel(normalizedLine string) bool {
+	return strings.Contains(normalizedLine, "sprzedawca") ||
+		strings.Contains(normalizedLine, "wystawca") ||
+		strings.Contains(normalizedLine, "seller")
+}
+
+func isBuyerLabel(normalizedLine string) bool {
+	return strings.Contains(normalizedLine, "nabywca") ||
+		strings.Contains(normalizedLine, "odbiorca") ||
+		strings.Contains(normalizedLine, "buyer") ||
+		strings.Contains(normalizedLine, "customer") ||
+		strings.Contains(normalizedLine, "klient")
+}
+
+func afterLabelValue(line string) string {
+	for _, separator := range []string{":", "-"} {
+		if before, after, found := strings.Cut(line, separator); found && isSellerLabel(strings.ToLower(before)) {
+			return after
+		}
+	}
+	return ""
+}
+
+func cleanCorrespondentCandidate(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	for _, marker := range []string{" NIP", " nip", " REGON", " regon", " VAT", " vat"} {
+		if index := strings.Index(candidate, marker); index >= 0 {
+			candidate = candidate[:index]
+		}
+	}
+	return strings.Trim(candidate, " \t\r\n,.;:-")
+}
+
+func isUsableSellerCandidate(candidate string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(candidate))
+	if len([]rune(normalized)) < 3 {
+		return false
+	}
+	if isSellerLabel(normalized) || isBuyerLabel(normalized) || isOwnBusinessCorrespondent(normalized) {
+		return false
+	}
+	excludedFragments := []string{"nip", "regon", "adres", "ul.", "kod pocztowy", "konto", "bank"}
+	for _, fragment := range excludedFragments {
+		if strings.Contains(normalized, fragment) {
+			return false
+		}
+	}
+	return true
+}
+
+func comparableName(text string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(text) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+func digitsOnly(text string) string {
+	var builder strings.Builder
+	for _, r := range text {
+		if unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 // getSuggestedDocumentType generates a suggested document type for a document using the LLM
@@ -274,7 +493,7 @@ func (app *App) getSuggestedDocumentType(
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithTemperature(0))
 	if err != nil {
 		logger.Errorf("Error getting response from LLM: %v", err)
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
@@ -344,7 +563,7 @@ func (app *App) getSuggestedTitle(ctx context.Context, content string, originalT
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithTemperature(0))
 	if err != nil {
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
 	}
@@ -400,7 +619,7 @@ func (app *App) getSuggestedCreatedDate(ctx context.Context, content string, log
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithTemperature(0))
 	if err != nil {
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
 	}
