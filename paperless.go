@@ -1328,10 +1328,14 @@ func (client *PaperlessClient) GetTaskStatus(ctx context.Context, taskID string)
 // CreateTag creates a new tag and returns its ID
 func (client *PaperlessClient) CreateTag(ctx context.Context, tagName string) (int, error) {
 	type tagRequest struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Owner *int   `json:"owner"`
 	}
 
-	requestBody, err := json.Marshal(tagRequest{Name: tagName})
+	requestBody, err := json.Marshal(tagRequest{
+		Name:  tagName,
+		Owner: nil,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("error marshaling tag request: %w", err)
 	}

@@ -185,6 +185,29 @@ func TestGetAllTags(t *testing.T) {
 	assert.Equal(t, expectedTags, tags)
 }
 
+func TestCreateTagCreatesGlobalTag(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+
+		var payload map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.Equal(t, "Studia", payload["name"])
+		owner, exists := payload["owner"]
+		assert.True(t, exists)
+		assert.Nil(t, owner)
+
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": 42}`))
+	})
+
+	tagID, err := env.client.CreateTag(context.Background(), "Studia")
+	require.NoError(t, err)
+	assert.Equal(t, 42, tagID)
+}
+
 // TestGetDocumentCountByTag tests the GetDocumentCountByTag method
 func TestGetDocumentCountByTag(t *testing.T) {
 	env := newTestEnv(t)
