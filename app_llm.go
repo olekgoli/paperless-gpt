@@ -157,6 +157,9 @@ func (app *App) getSuggestedTags(
 	// Remove duplicates
 	slices.Sort(suggestedTags)
 	suggestedTags = slices.Compact(suggestedTags)
+	suggestedTags = sanitizeSuggestedTags(suggestedTags, suggestedTitle, content)
+	slices.Sort(suggestedTags)
+	suggestedTags = slices.Compact(suggestedTags)
 
 	// Filter out tags that are not in the available tags list (unless CREATE_NEW_TAGS is enabled)
 	if createNewTags {
@@ -230,6 +233,12 @@ func sanitizeSuggestedTags(tags []string, title, content string) []string {
 			continue
 		}
 		if normalizedTag == "podatki" && isInvoice && !isTaxDocument {
+			continue
+		}
+		if normalizedTag == "zakupy" && isInvoice && !isSignificantPurchase {
+			continue
+		}
+		if normalizedTag == "ubezpieczenia" && !isInsuranceDocument && !isReservationOrVoucher {
 			continue
 		}
 		if normalizedTag == "zatrudnienie" && isBusinessITAgreement {
@@ -372,12 +381,12 @@ func isPrivacyNoticeText(normalizedText string) bool {
 
 func isInsuranceText(normalizedText string) bool {
 	return strings.Contains(normalizedText, "polisa") ||
-		strings.Contains(normalizedText, "ubezpiecze") ||
 		strings.Contains(normalizedText, "odszkodow") ||
 		strings.Contains(normalizedText, "zgłoszenia szkody") ||
 		strings.Contains(normalizedText, "zgloszenia szkody") ||
 		strings.Contains(normalizedText, "formularz zgłoszenia szkody") ||
-		strings.Contains(normalizedText, "formularz zgloszenia szkody")
+		strings.Contains(normalizedText, "formularz zgloszenia szkody") ||
+		(strings.Contains(normalizedText, "pzu") && strings.Contains(normalizedText, "ubezpiecze"))
 }
 
 func isVehicleText(normalizedText string) bool {
@@ -392,9 +401,38 @@ func isVehicleText(normalizedText string) bool {
 
 func isReservationOrVoucherText(normalizedText string) bool {
 	return strings.Contains(normalizedText, "voucher") ||
-		strings.Contains(normalizedText, "rezerwac") ||
-		strings.Contains(normalizedText, "booking") ||
-		strings.Contains(normalizedText, "reservation")
+		isTravelReservationDocumentText(normalizedText)
+}
+
+func isTravelReservationDocumentText(normalizedText string) bool {
+	if strings.Contains(normalizedText, "potwierdzenie rezerwacji") ||
+		strings.Contains(normalizedText, "booking confirmation") ||
+		strings.Contains(normalizedText, "reservation confirmation") {
+		return true
+	}
+	if !strings.Contains(normalizedText, "rezerwac") &&
+		!strings.Contains(normalizedText, "booking") &&
+		!strings.Contains(normalizedText, "reservation") {
+		return false
+	}
+	travelKeywords := []string{
+		"podróż",
+		"podroz",
+		"hotel",
+		"nocleg",
+		"lot",
+		"bilet",
+		"wakac",
+		"sun & fun",
+		"travel",
+		"hurghada",
+	}
+	for _, keyword := range travelKeywords {
+		if strings.Contains(normalizedText, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func isWithdrawalOrStatementText(normalizedText string) bool {
@@ -659,13 +697,11 @@ func sanitizeSuggestedDocumentType(suggested, title, content string) string {
 	normalizedText := strings.ToLower(title + "\n" + content)
 
 	switch {
-	case isPrivacyNoticeText(normalizedText):
-		return "Dokument informacyjny"
 	case isThesisText(normalizedText):
 		return "Praca dyplomowa"
 	case strings.Contains(normalizedText, "voucher"):
 		return "Voucher"
-	case strings.Contains(normalizedText, "rezerwac") || strings.Contains(normalizedText, "booking") || strings.Contains(normalizedText, "reservation"):
+	case isTravelReservationDocumentText(normalizedText):
 		return "Rezerwacja"
 	case isInsuranceText(normalizedText):
 		return "Polisa"
@@ -679,6 +715,8 @@ func sanitizeSuggestedDocumentType(suggested, title, content string) string {
 		return "Paragon"
 	case isDiagnosticResultText(normalizedText):
 		return "Wynik badania"
+	case isPrivacyNoticeText(normalizedText):
+		return "Dokument informacyjny"
 	default:
 		return documentType
 	}

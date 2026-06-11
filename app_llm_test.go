@@ -590,6 +590,16 @@ func TestSanitizeSuggestedTagsForBusinessHardwareInvoice(t *testing.T) {
 	assert.ElementsMatch(t, []string{"Działalność gospodarcza", "Finanse", "Zakupy"}, tags)
 }
 
+func TestSanitizeSuggestedTagsRemovesPurchaseFromServiceInvoice(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Działalność gospodarcza", "Finanse", "Zakupy"},
+		"Faktura INFAKT",
+		"Sprzedawca: INFAKT Sp. z o.o.\nNabywca: Aleksander Goli Usługi IT NIP 6351860955\nUsługa księgowa",
+	)
+
+	assert.ElementsMatch(t, []string{"Działalność gospodarcza", "Finanse"}, tags)
+}
+
 func TestSanitizeSuggestedTagsForInsuranceVehicleDocument(t *testing.T) {
 	tags := sanitizeSuggestedTags(
 		[]string{"Finanse", "Szkoda"},
@@ -598,6 +608,16 @@ func TestSanitizeSuggestedTagsForInsuranceVehicleDocument(t *testing.T) {
 	)
 
 	assert.ElementsMatch(t, []string{"Finanse", "Ubezpieczenia", "Samochód"}, tags)
+}
+
+func TestSanitizeSuggestedTagsRemovesInsuranceMentionFromTelecomContract(t *testing.T) {
+	tags := sanitizeSuggestedTags(
+		[]string{"Telekomunikacja", "Umowy", "Ubezpieczenia"},
+		"Umowa o świadczenie usług Orange",
+		"Orange Polska umowa telekomunikacyjna z opcjonalną wzmianką o usługach ubezpieczeniowych.",
+	)
+
+	assert.ElementsMatch(t, []string{"Telekomunikacja", "Umowy"}, tags)
 }
 
 func TestSanitizeSuggestedTagsRemovesAgreementFromStatementsAndVouchers(t *testing.T) {
@@ -738,9 +758,9 @@ func TestSanitizeSuggestedDocumentType(t *testing.T) {
 		},
 		{
 			name:      "policy",
-			suggested: "Umowa",
+			suggested: "Dokument informacyjny",
 			title:     "Polisa OC",
-			content:   "PZU ubezpieczenie pojazdu, numer rejestracyjny.",
+			content:   "PZU ubezpieczenie pojazdu, numer rejestracyjny. Informacja o przetwarzaniu danych osobowych.",
 			expected:  "Polisa",
 		},
 		{
